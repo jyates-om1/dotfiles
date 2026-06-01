@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+#
+# Dotfiles setup for the OM1 devenv (Ubuntu host) — bash + starship.
+#
+# This is the script the devenv provisioner runs as your user during every
+# `devenv up`/`rebuild` (wired via dotfiles_script in environment.tfvars).
+#
+# Design mirrors the OM1 convention: symlinking the tracked dotfiles is the
+# only step that MUST succeed, so it runs first and unconditionally. Everything
+# else (shell change, tool installs) is best-effort: a failure warns and
+# continues instead of aborting the whole provision. On a pre-provisioned host
+# most tools already exist, so those blocks no-op.
+
+set -uo pipefail
+
+log()  { echo "[$(date -Iseconds)] $*"; }
+warn() { log "WARN: $*"; }
+
+# Resolve the repo root from this script's own location so it can be run from
+# anywhere (including as the devenv provisioning hook).
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+log "Using dotfiles repo at: $REPO_DIR"
+
+# ============================================================================
+# 1. Symlink dotfiles  (critical block — runs first, never blocks on installs)
+# ============================================================================
+log "Symlinking dotfiles..."
+
+# Back up existing REAL files (leave symlinks from previous runs alone).
+for f in .bashrc .bash_profile .tmux.conf; do
+    if [ -f "$HOME/$f" ] && [ ! -L "$HOME/$f" ]; then
+        mv "$HOME/$f" "$HOME/${f}.backup"
+        log "Backed up existing $f -> ${f}.backup"
+    fi
+done
+
+ln -sfn "$REPO_DIR/bash/.bashrc"       "$HOME/.bashrc"
+ln -sfn "$REPO_DIR/bash/.bash_profile" "$HOME/.bash_profile"
+ln -sfn "$REPO_DIR/tmux/.tmux.conf"    "$HOME/.tmux.conf"
+
+# ============================================================================
+# 2. gitconfig  (skip inside devcontainers — they auto-load the host gitconfig)
+# ============================================================================
+#
+# ~/.gitconfig is a REAL machine-local file that *includes* the tracked
+# template. It must NOT be a symlink to the template: `git config --global` and
+# `gh auth setup-git` write to ~/.gitconfig, and a symlink would route those
+# machine-specific writes into version control.
+if [ -z "${REMOTE_CONTAINERS:-}" ] && [ -z "${CODESPACES:-}" ] && [ ! -f "/.dockerenv" ]; then
+    GITCONFIG_INCLUDE="$REPO_DIR/git/gitconfig_template"
+
+    if [ -L "$HOME/.gitconfig" ]; then
+        rm -f "$HOME/.gitconfig"
+        log "Removed legacy ~/.gitconfig symlink"
+    fi
+
+    if [ ! -f "$HOME/.gitconfig" ]; then
+        log "Creating ~/.gitconfig (includes template; identity Tucker Yates <jyates@om1.com>)..."
+        cat > "$HOME/.gitconfig" <<EOF
+[include]
+    path = $GITCONFIG_INCLUDE
+[user]
+    name  = Tucker Yates
+    email = jyates@om1.com
+EOF
+    else
+        # Real file already exists — keep its identity/credentials, just make
+        # sure it pulls in the shared template (idempotent).
+        if ! git config --global --get-all include.path 2>/dev/null | grep -qxF "$GITCONFIG_INCLUDE"; then
+            git config --global --add include.path "$GITCONFIG_INCLUDE" \
+                && log "Added template include to existing ~/.gitconfig" \
+                || warn "could not add include.path to ~/.gitconfig"
+        else
+            log "~/.gitconfig already includes the template"
+        fi
+    fi
+else
+    log "Devcontainer detected, skipping gitconfig (auto-loaded from host)"
+fi
+
+# ============================================================================
+# 3. Docker config  (enables the ECR credential helper for image pulls)
+# ============================================================================
+mkdir -p "$HOME/.docker"
+if [ -f "$HOME/.docker/config.json" ] && [ ! -L "$HOME/.docker/config.json" ]; then
+    mv "$HOME/.docker/config.json" "$HOME/.docker/config.json.backup"
+    log "Backed up existing docker config.json"
+fi
+ln -sfn "$REPO_DIR/docker/config.json" "$HOME/.docker/config.json"
+log "Symlinked ~/.docker/config.json"
+
+# ============================================================================
+# 4. Make bash the default login shell  (the whole point of this repo)
+# ============================================================================
+TARGET_SHELL="/bin/bash"
+if [ -x "$TARGET_SHELL" ]; then
+    if command -v getent >/dev/null 2>&1; then
+        CURRENT_SHELL="$(getent passwd "${USER:-$(id -un)}" | cut -d: -f7)"
+    else
+        CURRENT_SHELL="${SHELL:-}"
+    fi
+    if [ "$CURRENT_SHELL" != "$TARGET_SHELL" ]; then
+        if sudo -n true 2>/dev/null; then
+            sudo chsh -s "$TARGET_SHELL" "${USER:-$(id -un)}" \
+                && log "Default shell set to $TARGET_SHELL" \
+                || warn "chsh failed; run manually: sudo chsh -s $TARGET_SHELL \$USER"
+        elif chsh -s "$TARGET_SHELL" 2>/dev/null; then
+            log "Default shell set to $TARGET_SHELL"
+        else
+            warn "no passwordless sudo; change shell manually: chsh -s $TARGET_SHELL"
+        fi
+    else
+        log "Default shell already $TARGET_SHELL"
+    fi
+else
+    warn "$TARGET_SHELL not found; cannot set default shell"
+fi
+
+# ============================================================================
+# 5. Best-effort tool installs — only when missing (skipped on provisioned host)
+# ============================================================================
+
+# starship prompt
+if ! command -v starship >/dev/null 2>&1; then
+    log "Installing starship..."
+    mkdir -p "$HOME/.local/bin"
+    curl -fsSL https://starship.rs/install.sh \
+        | sh -s -- -y -b "$HOME/.local/bin" \
+        || warn "starship install failed; prompt falls back to default bash PS1"
+else
+    log "starship already installed"
+fi
+
+# Docker ECR credential helper (referenced by docker/config.json)
+if ! command -v docker-credential-ecr-login >/dev/null 2>&1; then
+    ARCH="$(uname -m)"
+    case "$ARCH" in
+        x86_64|amd64) ecr_arch="amd64" ;;
+        arm64|aarch64) ecr_arch="arm64" ;;
+        *) ecr_arch="" ; warn "unknown arch $ARCH; skipping ECR helper" ;;
+    esac
+    if [ -n "$ecr_arch" ]; then
+        log "Installing docker-credential-ecr-login..."
+        ECR_VERSION="0.11.0"
+        ECR_URL="https://amazon-ecr-credential-helper-releases.s3.us-east-2.amazonaws.com/${ECR_VERSION}/linux-${ecr_arch}/docker-credential-ecr-login"
+        if curl -fSL "$ECR_URL" -o /tmp/docker-credential-ecr-login \
+            && { sudo -n true 2>/dev/null || sudo true 2>/dev/null; }; then
+            chmod +x /tmp/docker-credential-ecr-login
+            sudo mv /tmp/docker-credential-ecr-login /usr/local/bin/docker-credential-ecr-login \
+                && log "ECR credential helper installed" \
+                || warn "ECR helper install failed"
+        else
+            warn "could not download ECR helper or no sudo; skipping"
+        fi
+        rm -f /tmp/docker-credential-ecr-login
+    fi
+else
+    log "ECR credential helper already installed"
+fi
+
+log "Dotfiles installation complete."
+log "Open a new login shell (reconnect, or run 'exec bash -l') to pick up bash + starship."
