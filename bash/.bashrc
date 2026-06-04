@@ -29,10 +29,24 @@ case ":$PATH:" in
     *) export PATH="$HOME/.local/bin:$PATH" ;;
 esac
 
+# Durable CLI tools live on the persistent /mnt/devdata volume (survives rebuilds,
+# unlike snaps / ~/.local which sit on the disposable root FS). e.g. glow.
+case ":$PATH:" in
+    *":/mnt/devdata/bin:"*) ;;
+    *) export PATH="/mnt/devdata/bin:$PATH" ;;
+esac
+
 # ---- Colors / pager -------------------------------------------------------
 export CLICOLOR=1
 export LESS='-FRX'              # quit if one screen, keep colors, no init clear
 command -v dircolors >/dev/null 2>&1 && eval "$(dircolors -b)"
+
+# ---- Claude Code ----------------------------------------------------------
+# Force synchronized output (DEC private mode 2026) so each TUI frame is drawn
+# atomically. tmux 3.4+ supports 2026 but Claude Code doesn't auto-detect it
+# under tmux, so without this the animated status line tears and bleeds across
+# split panes over a laggy SSM/SSH link.
+export CLAUDE_CODE_FORCE_SYNC_OUTPUT=1
 
 # ---- Aliases --------------------------------------------------------------
 alias ls='ls --color=auto'
