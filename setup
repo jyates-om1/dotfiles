@@ -54,25 +54,31 @@ if [ -z "${REMOTE_CONTAINERS:-}" ] && [ -z "${CODESPACES:-}" ] && [ ! -f "/.dock
         log "Removed legacy ~/.gitconfig symlink"
     fi
 
+    # ~/.gitconfig may be absent, or seeded as an EMPTY file by the devenv
+    # provisioner (it pre-creates the file so Docker can't bind-mount it into a
+    # root-owned directory — DEVO-7771). Either way, ensure it exists, pulls in
+    # the shared template, and carries machine-local identity. Each step is
+    # idempotent and writes only to the real ~/.gitconfig, never the template.
     if [ ! -f "$HOME/.gitconfig" ]; then
-        log "Creating ~/.gitconfig (includes template; identity Tucker Yates <jyates@om1.com>)..."
-        cat > "$HOME/.gitconfig" <<EOF
-[include]
-    path = $GITCONFIG_INCLUDE
-[user]
-    name  = Tucker Yates
-    email = jyates@om1.com
-EOF
+        : > "$HOME/.gitconfig"
+        log "Created ~/.gitconfig"
+    fi
+
+    if ! git config --global --get-all include.path 2>/dev/null | grep -qxF "$GITCONFIG_INCLUDE"; then
+        git config --global --add include.path "$GITCONFIG_INCLUDE" \
+            && log "Added template include to ~/.gitconfig" \
+            || warn "could not add include.path to ~/.gitconfig"
     else
-        # Real file already exists — keep its identity/credentials, just make
-        # sure it pulls in the shared template (idempotent).
-        if ! git config --global --get-all include.path 2>/dev/null | grep -qxF "$GITCONFIG_INCLUDE"; then
-            git config --global --add include.path "$GITCONFIG_INCLUDE" \
-                && log "Added template include to existing ~/.gitconfig" \
-                || warn "could not add include.path to ~/.gitconfig"
-        else
-            log "~/.gitconfig already includes the template"
-        fi
+        log "~/.gitconfig already includes the template"
+    fi
+
+    if [ -z "$(git config --global --get user.name 2>/dev/null)" ]; then
+        git config --global user.name  "Tucker Yates"
+        git config --global user.email "jyates@om1.com" \
+            && log "Set git identity in ~/.gitconfig (Tucker Yates <jyates@om1.com>)" \
+            || warn "could not set git identity in ~/.gitconfig"
+    else
+        log "~/.gitconfig already has a user identity"
     fi
 else
     log "Devcontainer detected, skipping gitconfig (auto-loaded from host)"
@@ -117,7 +123,65 @@ else
 fi
 
 # ============================================================================
-# 5. Best-effort tool installs — only when missing (skipped on provisioned host)
+# 5. tmux plugins  (clone up front, persist on EBS)
+# ============================================================================
+#
+# tmux/.tmux.conf `run`s these plugins synchronously while only *background*-
+# cloning them, so on a fresh server (e.g. a devenv rebuild, which wipes the
+# ephemeral ~/.tmux) the `run` calls fire before the clones finish and the
+# Catppuccin theme/status bar silently never loads. Fix it here:
+#   B) persist the plugins dir on /mnt/devdata when present, so a rebuild reuses
+#      the already-cloned plugins instead of starting from empty; and
+#   A) clone them synchronously now — before any tmux server starts — so they
+#      exist by the time .tmux.conf runs them. Both steps are idempotent.
+TMUX_PLUGINS="$HOME/.tmux/plugins"
+mkdir -p "$HOME/.tmux"
+
+PERSIST_DIR=""
+if [ -d /mnt/devdata ]; then
+    # /mnt/devdata root is root-owned; create our per-user dir the same way the
+    # provisioner makes ~/.ssh, ~/.claude, etc. — via sudo, chowned to us.
+    PERSIST_DIR="/mnt/devdata/.tmux/plugins"
+    if [ ! -d "$PERSIST_DIR" ]; then
+        if ! sudo -n install -d -o "$(id -un)" -g "$(id -gn)" \
+                /mnt/devdata/.tmux "$PERSIST_DIR" 2>/dev/null; then
+            warn "could not create $PERSIST_DIR (no passwordless sudo?); using ephemeral plugins dir"
+            PERSIST_DIR=""
+        fi
+    fi
+fi
+
+if [ -n "$PERSIST_DIR" ]; then
+    # Migrate plugins from a previous real (non-symlink) dir BEFORE removing it,
+    # then point ~/.tmux/plugins at the persisted copy.
+    if [ -e "$TMUX_PLUGINS" ] && [ ! -L "$TMUX_PLUGINS" ]; then
+        cp -an "$TMUX_PLUGINS/." "$PERSIST_DIR/" 2>/dev/null || true
+        rm -rf "$TMUX_PLUGINS"
+    fi
+    ln -sfn "$PERSIST_DIR" "$TMUX_PLUGINS"
+    log "tmux plugins persisted on EBS: $TMUX_PLUGINS -> $PERSIST_DIR"
+else
+    mkdir -p "$TMUX_PLUGINS"
+fi
+
+# <dir> <repo-url> <entrypoint-checked-by-.tmux.conf>
+clone_tmux_plugin() {
+    local dir="$TMUX_PLUGINS/$1"
+    if [ -e "$dir/$3" ]; then
+        log "tmux plugin $1 already present"
+    elif git clone --depth 1 "$2" "$dir" >/dev/null 2>&1; then
+        log "Cloned tmux plugin $1"
+    else
+        warn "failed to clone tmux plugin $1 (status bar may be degraded until next run)"
+    fi
+}
+clone_tmux_plugin catppuccin     https://github.com/catppuccin/tmux             catppuccin.tmux
+clone_tmux_plugin tmux-cpu       https://github.com/tmux-plugins/tmux-cpu       cpu.tmux
+clone_tmux_plugin tmux-resurrect https://github.com/tmux-plugins/tmux-resurrect resurrect.tmux
+clone_tmux_plugin tmux-continuum https://github.com/tmux-plugins/tmux-continuum continuum.tmux
+
+# ============================================================================
+# 6. Best-effort tool installs — only when missing (skipped on provisioned host)
 # ============================================================================
 
 # starship prompt
