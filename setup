@@ -181,7 +181,46 @@ clone_tmux_plugin tmux-resurrect https://github.com/tmux-plugins/tmux-resurrect 
 clone_tmux_plugin tmux-continuum https://github.com/tmux-plugins/tmux-continuum continuum.tmux
 
 # ============================================================================
-# 6. Best-effort tool installs — only when missing (skipped on provisioned host)
+# 6. Herdr session snapshots  (persist on EBS so the workspace survives rebuild)
+# ============================================================================
+#
+# Herdr saves its session snapshot (workspace/tab/pane layout) alongside
+# config.toml, logs, and runtime sockets under ~/.config/herdr — on the
+# ephemeral root disk, so a rebuild wipes it. Point that dir at /mnt/devdata.
+# Symlink the whole dir, not just session.json: herdr rewrites the snapshot via
+# temp-file+rename, and a file-level symlink would be replaced by a real file on
+# the first save. Keeping the temp and target in one dir keeps that atomic.
+HERDR_CFG="$HOME/.config/herdr"
+if [ -d /mnt/devdata ]; then
+    HERDR_PERSIST="/mnt/devdata/.config/herdr"
+    if [ ! -d "$HERDR_PERSIST" ]; then
+        sudo -n install -d -o "$(id -un)" -g "$(id -gn)" \
+                /mnt/devdata/.config "$HERDR_PERSIST" 2>/dev/null \
+            || warn "could not create $HERDR_PERSIST (no passwordless sudo?); herdr snapshots stay ephemeral"
+    fi
+
+    if [ -d "$HERDR_PERSIST" ]; then
+        if [ -L "$HERDR_CFG" ] && [ "$(readlink -f "$HERDR_CFG")" = "$HERDR_PERSIST" ]; then
+            log "herdr snapshots already persisted on EBS"
+        elif [ -S "$HERDR_CFG/herdr.sock" ] && herdr status server >/dev/null 2>&1; then
+            # A live server owns these sockets; swapping the dir now would drop it.
+            # Seed the snapshot and defer the swap to the next fresh start.
+            cp -an "$HERDR_CFG/session.json" "$HERDR_PERSIST/" 2>/dev/null || true
+            warn "herdr server running; snapshot dir moves to $HERDR_PERSIST on next fresh start"
+        else
+            mkdir -p "$(dirname "$HERDR_CFG")"
+            if [ -e "$HERDR_CFG" ] && [ ! -L "$HERDR_CFG" ]; then
+                cp -an "$HERDR_CFG/." "$HERDR_PERSIST/" 2>/dev/null || true
+                rm -rf "$HERDR_CFG"
+            fi
+            ln -sfn "$HERDR_PERSIST" "$HERDR_CFG"
+            log "herdr snapshots persisted on EBS: $HERDR_CFG -> $HERDR_PERSIST"
+        fi
+    fi
+fi
+
+# ============================================================================
+# 7. Best-effort tool installs — only when missing (skipped on provisioned host)
 # ============================================================================
 
 # starship prompt
