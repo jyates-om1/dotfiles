@@ -261,5 +261,36 @@ else
     log "ECR credential helper already installed"
 fi
 
+# ============================================================================
+# 8. Personal Claude skills  (version-tracked here; linked into ~/.claude/skills)
+# ============================================================================
+#
+# ~/.claude is persisted on /mnt/devdata, but ~/.agents/skills (where the shared
+# agent skills live) is on the ephemeral root disk, so a rebuild wipes it and
+# silently breaks any personal skill kept there. Keep personal skills in this
+# repo instead and link them in — they then survive rebuilds AND stay in version
+# control. Each dir under claude/skills/ becomes ~/.claude/skills/<name>.
+CLAUDE_SKILLS_SRC="$REPO_DIR/claude/skills"
+CLAUDE_SKILLS_DST="$HOME/.claude/skills"
+if [ -d "$CLAUDE_SKILLS_SRC" ] && [ -d "$HOME/.claude" ]; then
+    mkdir -p "$CLAUDE_SKILLS_DST"
+    for skill in "$CLAUDE_SKILLS_SRC"/*/; do
+        [ -d "$skill" ] || continue
+        skill="${skill%/}"
+        name="$(basename "$skill")"
+        dst="$CLAUDE_SKILLS_DST/$name"
+        if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$skill" ]; then
+            log "Claude skill $name already linked"
+        elif [ -e "$dst" ] && [ ! -L "$dst" ]; then
+            warn "~/.claude/skills/$name is a real path, not a symlink — leaving it alone"
+        else
+            rm -f "$dst"   # clears a stale/dangling symlink; a broken link is not -e
+            ln -sfn "$skill" "$dst" \
+                && log "Linked Claude skill $name -> $skill" \
+                || warn "could not link Claude skill $name"
+        fi
+    done
+fi
+
 log "Dotfiles installation complete."
 log "Open a new login shell (reconnect, or run 'exec bash -l') to pick up bash + starship."
