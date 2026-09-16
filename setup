@@ -261,15 +261,7 @@ else
     log "ECR credential helper already installed"
 fi
 
-# ============================================================================
-# 8. Personal Claude skills  (version-tracked here; linked into ~/.claude/skills)
-# ============================================================================
-#
-# ~/.claude is persisted on /mnt/devdata, but ~/.agents/skills (where the shared
-# agent skills live) is on the ephemeral root disk, so a rebuild wipes it and
-# silently breaks any personal skill kept there. Keep personal skills in this
-# repo instead and link them in — they then survive rebuilds AND stay in version
-# control. Each dir under claude/skills/ becomes ~/.claude/skills/<name>.
+# 8. Personal Claude skills — link repo-tracked claude/skills/* into the persistent ~/.claude/skills (~/.agents/skills is ephemeral, wiped on rebuild).
 CLAUDE_SKILLS_SRC="$REPO_DIR/claude/skills"
 CLAUDE_SKILLS_DST="$HOME/.claude/skills"
 if [ -d "$CLAUDE_SKILLS_SRC" ] && [ -d "$HOME/.claude" ]; then
