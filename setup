@@ -284,5 +284,40 @@ if [ -d "$CLAUDE_SKILLS_SRC" ] && [ -d "$HOME/.claude" ]; then
     done
 fi
 
+# 9. Playwright MCP for Claude UI checks — register the MCP server and install the headless Chromium it pins, plus its system libraries. All of it lives under $HOME / apt, which a rebuild wipes.
+if command -v npx >/dev/null 2>&1; then
+    # Use the MCP package's own playwright-core, so the browser revision matches what the server expects (playwright@latest can pin a different one).
+    PW_CORE=(npx -y -p @playwright/mcp@latest playwright-core)
+    if ls "$HOME"/.cache/ms-playwright/chromium_headless_shell-* >/dev/null 2>&1; then
+        log "Playwright headless Chromium already present"
+    else
+        log "Installing Playwright headless Chromium..."
+        "${PW_CORE[@]}" install chromium >/dev/null 2>&1 \
+            && log "Playwright Chromium installed" \
+            || warn "Playwright Chromium install failed; run: npx -y -p @playwright/mcp@latest playwright-core install chromium"
+    fi
+    if ldconfig -p 2>/dev/null | grep -q 'libatk-1.0.so.0' && ldconfig -p 2>/dev/null | grep -q 'libgbm.so.1'; then
+        log "Playwright Chromium system libraries already installed"
+    elif sudo -n true 2>/dev/null; then
+        log "Installing Playwright Chromium system libraries..."
+        sudo -E env "PATH=$PATH" "${PW_CORE[@]}" install-deps chromium >/dev/null 2>&1 \
+            && log "Playwright system libraries installed" \
+            || warn "Playwright install-deps failed; run: sudo npx -y -p @playwright/mcp@latest playwright-core install-deps chromium"
+    else
+        warn "no passwordless sudo; run once: sudo npx -y -p @playwright/mcp@latest playwright-core install-deps chromium"
+    fi
+    if command -v claude >/dev/null 2>&1; then
+        if claude mcp get playwright >/dev/null 2>&1; then
+            log "Playwright MCP server already registered"
+        else
+            claude mcp add --scope user playwright -- npx -y @playwright/mcp@latest --headless --isolated >/dev/null 2>&1 \
+                && log "Registered Playwright MCP server (user scope)" \
+                || warn "could not register the Playwright MCP server"
+        fi
+    fi
+else
+    warn "npx not found; skipping Playwright MCP setup"
+fi
+
 log "Dotfiles installation complete."
 log "Open a new login shell (reconnect, or run 'exec bash -l') to pick up bash + starship."
