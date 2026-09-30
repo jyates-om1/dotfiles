@@ -1,6 +1,6 @@
 ---
 name: jy-ship-ticket
-description: Take one Jira ticket from refinement to a review-ready PR by orchestrating subagents — grill (refine) → implement → code-review loop → fable validation → fix-up → verify → summarize. Use only when the user explicitly asks; it spawns many subagents and uses significant tokens.
+description: Take one Jira ticket from refinement to a review-ready PR by orchestrating subagents — grill (refine) → implement → code-review loop → fable validation → fix-up → local UI check → verify → summarize (plus an on-request deployed check after merge). Use only when the user explicitly asks; it spawns many subagents and uses significant tokens.
 disable-model-invocation: true
 ---
 
@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 An orchestration loop that takes ONE ticket from refinement to a review-ready PR. Subagents do the heavy lifting; you stay in the loop at the decision points and you verify everything they claim. Run only on explicit request.
 
-Phase 0 is interactive (you and the user). Phases 2–5 are subagent-driven. You own Phase 1, Phase 3's judgment, and Phase 6.
+Phase 0 is interactive (you and the user). Phases 2–5.5 are subagent-driven. You own Phase 1, Phase 3's judgment, and Phase 6. Phase 7 runs only on request.
 
 ## Phase 0 — Refine (interactive: `grilling`)
 Invoke the `grilling` skill on the ticket. Ground every question in the codebase FIRST — dispatch Explore subagents to find facts; never ask the user something you can look up. Work the design tree in rounds (one round at a time, each question with your recommended answer). Surface data gaps you discover (a field the AC assumes but the lake doesn't have, etc.). Let the grill's length match the design surface — a prescriptive "ready-for-agent" ticket may need only 1–2 rounds. When the frontier is empty, write the refined spec + ACs and get the user's explicit confirmation before acting.
@@ -41,11 +41,18 @@ Spawn a validation subagent with `model: fable`. Give it the ACs + the PR + any 
 ## Phase 5 — Fix-up (subagent)
 Spawn a fix-up subagent to implement fable's prioritized list (same devcontainer/commit rules + the same finish-in-one-turn rule as Phase 2). Prefer fixes that PRESERVE already-settled user decisions; flag it if a fix would reverse one.
 
+## Phase 5.5 — UI check (only if the ticket has UI ACs)
+Run in the ticket's worktree stack (`task app:preview`; the domain is in the worktree's `.env`), never the main checkout. A subagent drives a headless browser (Playwright MCP) through each UI AC. Admin uses the preview test-token; basic uses a route stub on the app's effective-scopes endpoint. Seed through the API on the worktree DB only. For each scenario, declare the expected result *before* looking, then fill `| AC | expected | observed | pass/fail |` with one line of evidence plus a screenshot. No prose verdicts. Post the table and screenshots as one PR comment, noting the blind spots (mock auth, wildcard tenant, no WAF/Auth0). A FAIL goes back to Phase 5 as a must-fix. Never run against deployed environments; deployed-only checks stay in the human QA checkpoint.
+
 ## Phase 6 — Verify + summarize (you do this)
 - **Trust but verify every subagent, and assume the first "done" may be stale.** These agents routinely (a) stop before committing/pushing with a premature "awaiting the suite" message, then (b) finish on a later resume — so their first completion notification often understates reality, and a *later* duplicate notification for the same task may report the true final state. Never act on the words; check the ground truth: `git rev-parse HEAD` vs `origin/<branch>`, `git status` clean, and grep the claimed change in the *pushed* file (`git show origin/<branch>:<file> | grep ...`). If the work isn't committed/pushed, TAKE OVER: run the suite from the devcontainer, commit as `om1` (no `--no-verify`), push. Re-run the full suite yourself for a first-party number regardless.
 - One agent touches the repo at a time. Stay hands-off the working tree while a subagent runs, or a concurrent-commit race ensues. Isolate parallel mutators in worktrees.
 - Post a final review-resolution comment.
+- If this ticket completes a QA checkpoint, write `qa-checkpoint-<letter>.md` as an executable script for claude-in-chrome. For each step give the role, URL, action and expected result, and end with the evidence-table template. The user runs it from Claude Desktop on their laptop against deployed dev after logging in with SSO. Claude never drives deployed dev from the devenv.
 - Summarize the whole run: Jira state, PR#, each phase's outcome, first-party test numbers, and what's left (team review/merge, follow-up tickets).
+
+## Phase 7 — Deployed check (on request, after the user merges)
+Only when the user asks, once the merge has rolled out to dev. Verify the rollout first (migration job Completed, alembic at head, the running image is the merge). Then script the ACs that only a deployment can prove: endpoints behind the WAF, warehouse grants, refusal bodies. Use a real token, no browser. Writes go only to the `phenom-test-cus` tenant; record what was created and delete it at the end. Report `| check | expected | observed | pass/fail |`. A FAIL becomes a follow-up ticket (or a POM-516 entry during the phenom-health phase), not a force-push to main.
 
 ## Hard-won conventions (do not relearn these)
 - Devcontainer commits as `-u om1`, never `--no-verify`; the commit's pre-commit hooks are the lint/format gate. `docker exec` default root will root-own `.git` — always `-u om1`.
