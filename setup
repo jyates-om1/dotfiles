@@ -96,6 +96,17 @@ ln -sfn "$REPO_DIR/docker/config.json" "$HOME/.docker/config.json"
 log "Symlinked ~/.docker/config.json"
 
 # ============================================================================
+# 3b. OBT container env  (Snowflake key paths for app-factory dev devcontainers; devenv connect syncs the keys to /mnt/devdata/.snowflake/keys but not this config)
+# ============================================================================
+mkdir -p "$HOME/.config/obt"
+if [ -f "$HOME/.config/obt/container-env-config" ] && [ ! -L "$HOME/.config/obt/container-env-config" ]; then
+    mv "$HOME/.config/obt/container-env-config" "$HOME/.config/obt/container-env-config.backup"
+    log "Backed up existing obt container-env-config"
+fi
+ln -sfn "$REPO_DIR/obt/container-env-config" "$HOME/.config/obt/container-env-config"
+log "Symlinked ~/.config/obt/container-env-config"
+
+# ============================================================================
 # 4. Make bash the default login shell  (the whole point of this repo)
 # ============================================================================
 TARGET_SHELL="/bin/bash"

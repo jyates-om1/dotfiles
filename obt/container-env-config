@@ -1,0 +1,3 @@
+OBT__CONTAINER__ENV__SNOWFLAKE_USER="JYATES"
+OBT__CONTAINER__ENV__SNOWFLAKE_DEID_KEY_PATH="/mnt/devdata/.snowflake/keys/snowflake_deid.p8"
+OBT__CONTAINER__ENV__SNOWFLAKE_ID_KEY_PATH="/mnt/devdata/.snowflake/keys/snowflake_id.p8"
