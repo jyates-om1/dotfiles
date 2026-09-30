@@ -318,10 +318,12 @@ if command -v npx >/dev/null 2>&1; then
         warn "no passwordless sudo; run once: sudo npx -y -p @playwright/mcp@latest playwright-core install-deps chromium"
     fi
     if command -v claude >/dev/null 2>&1; then
-        if claude mcp get playwright >/dev/null 2>&1; then
+        # --browser chromium: the default channel is system Chrome, which the devenv doesn't have.
+        if claude mcp get playwright 2>/dev/null | grep -q -- '--browser chromium'; then
             log "Playwright MCP server already registered"
         else
-            claude mcp add --scope user playwright -- npx -y @playwright/mcp@latest --headless --isolated >/dev/null 2>&1 \
+            claude mcp remove --scope user playwright >/dev/null 2>&1 || true
+            claude mcp add --scope user playwright -- npx -y @playwright/mcp@latest --headless --isolated --browser chromium >/dev/null 2>&1 \
                 && log "Registered Playwright MCP server (user scope)" \
                 || warn "could not register the Playwright MCP server"
         fi
