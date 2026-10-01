@@ -91,7 +91,7 @@ Setup that has bitten us:
 - Move the ticket to **Under Review** (transition "Submit for Review"), not Done. Done is the user's call after merge.
 - If the epic keeps a `progress.md`, add a line: ticket, PR, merge commit, first-party test numbers, and lessons for later tickets.
 - If this ticket completes a QA checkpoint, write `qa-checkpoint-<letter>.md` as an executable script for claude-in-chrome. For each step give the role, URL, action and expected result, and end with the evidence-table template. The user runs it from Claude Desktop on their laptop against deployed dev after logging in with SSO. Claude never drives deployed dev from the devenv.
-- Summarize the whole run: Jira state, PR#, each phase's outcome, first-party test numbers, and what's left (team review/merge, follow-up tickets).
+- Summarize the whole run: Jira state, the PR as a full clickable link (e.g. `https://github.com/<org>/<repo>/pull/<N>`, never just "PR #N"), each phase's outcome, first-party test numbers, and what's left (team review/merge, follow-up tickets). Whenever you tell the user a PR is ready for review or merge, link it the same way.
 
 ## Phase 7 — Merge and deployed check (on request, after the user merges)
 - **Before a migration PR merges,** and especially a stacked or retargeted one: rebase on CURRENT `origin/main` and re-run `alembic heads` plus a scratch-database upgrade. Another PR may have added a migration.
