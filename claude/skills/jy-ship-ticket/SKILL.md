@@ -55,7 +55,7 @@ Run in the ticket's worktree stack (`task app:preview`; the domain is in the wor
 2. **Writes one script** to `<evidence-dir>/ui-check.mjs`, in plain `playwright-core`, with no test runner. The script:
    - seeds through the API, using the same auth the browser uses;
    - runs every scenario, with the expected text in the script, so the expectations are fixed before anything is observed;
-   - saves a screenshot per key state with `page.screenshot({path})`;
+   - saves a screenshot per key state with `page.screenshot({path})`, after waiting for slide-in sheets and dialogs to stop animating (poll `boundingBox()` until it's stable); a screenshot taken mid-slide makes a correct screen look broken;
    - asserts with exact text or role queries;
    - writes `results.json` and the markdown results table;
    - cleans up the seed data in a `finally`, then checks the row counts against the baseline.
