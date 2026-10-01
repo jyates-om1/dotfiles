@@ -48,7 +48,23 @@ Spawn a validation subagent with `model: fable`. Give it the ACs + the PR + any 
 Spawn a fix-up subagent to implement fable's prioritized list (same devcontainer/commit rules + the same finish-in-one-turn rule as Phase 2). Prefer fixes that PRESERVE already-settled user decisions; flag it if a fix would reverse one.
 
 ## Phase 5.5 — UI check (only if the ticket has UI ACs)
-Run in the ticket's worktree stack (`task app:preview`; the domain is in the worktree's `.env`), never the main checkout. A subagent drives a headless browser (Playwright MCP) through each UI AC. Admin uses the preview test-token; basic uses a route stub on the app's effective-scopes endpoint. Seed through the API on the worktree DB only. For each scenario, declare the expected result *before* looking, then fill `| AC | expected | observed | pass/fail |` with one line of evidence plus a screenshot. No prose verdicts. Note the blind spots (mock auth, wildcard tenant, no WAF/Auth0). A FAIL goes back to Phase 5 as a must-fix. Never run against deployed environments; deployed-only checks stay in the human QA checkpoint.
+Run in the ticket's worktree stack (`task app:preview`; the domain is in the worktree's `.env`), never the main checkout. Admin uses the preview test-token; basic uses a route stub on the app's effective-scopes endpoint. Seed through the API on the worktree DB only. For each scenario, declare the expected result *before* looking, then fill `| AC | expected | observed | pass/fail |` with one line of evidence plus a screenshot. No prose verdicts. Note the blind spots (mock auth, wildcard tenant, no WAF/Auth0). A FAIL goes back to Phase 5 as a must-fix. Never run against deployed environments; deployed-only checks stay in the human QA checkpoint.
+
+**Script first, MCP to explore.** Playwright MCP is token-hungry: most actions return the page's accessibility-tree snapshot (often thousands of tokens), and the agent re-reads the page after nearly every click. POM-569's 10-scenario check cost about 127k subagent tokens over 70 tool calls. So the subagent:
+1. **Explores briefly with MCP.** It opens each screen the ACs touch, once, to learn selectors, roles and dialog structure. It doesn't run scenarios this way.
+2. **Writes one script** to `<evidence-dir>/ui-check.mjs`, in plain `playwright-core`, with no test runner. The script:
+   - seeds through the API, using the same auth the browser uses;
+   - runs every scenario, with the expected text in the script, so the expectations are fixed before anything is observed;
+   - saves a screenshot per key state with `page.screenshot({path})`;
+   - asserts with exact text or role queries;
+   - writes `results.json` and the markdown results table;
+   - cleans up the seed data in a `finally`, then checks the row counts against the baseline.
+3. **Runs it with one Bash call** and reads only the table and the failing scenarios. It opens a screenshot only when a scenario fails or the table needs visual evidence. Every screenshot goes on the evidence page anyway.
+4. **On a failure, switches to MCP** to investigate the live page. It then fixes the script, or reports the bug, and re-runs. A re-check after a code fix is one re-run of the script.
+5. **Launches the browser with `chromium.launch({executablePath})`,** pointing at the cached headless shell (`~/.cache/ms-playwright/chromium_headless_shell-*/chrome-linux/headless_shell`). That way the script doesn't depend on which `playwright-core` version it loads. It imports `playwright-core` from a scratch install (`npm i --prefix <evidence-dir>/runner playwright-core`), never the app's `package.json`.
+6. **Layout checks:** measure with `getBoundingClientRect` in the script, comparing the dialog's right edge with the furthest descendant's, at desktop width (1280×720) and phone width (400×800). Don't eyeball screenshots for this.
+
+The script stays in the evidence folder, so later checks on the ticket re-run it instead of re-driving the browser.
 
 Setup that has bitten us:
 - **Switch the worktree to its own stack first.** Set its `.git` to the ABSOLUTE gitdir (obt mounts the main `.git` at its host path). Delete the shared-container shims: the `frontend/node_modules` symlink (it loops in a worktree-only container) and `backend/.venv`. Keep `.tasks/`, which `task` needs on the host. From then on, commit from the worktree stack's own container.
@@ -58,7 +74,11 @@ Setup that has bitten us:
   - **If a frontend already holds 8010:** `docker rm -f <project>-frontend-1`, then `env -u PORT docker compose -p <project> -f .devcontainer/docker-compose.{obt,app,dev,app-dev}.yml --profile '*' up -d --no-deps frontend`.
   - **Before starting, stop any older worktree stack still holding 8000 or 8010:** `docker ps --filter name=<old>-wt -q | xargs -r docker stop`. Ctrl-C on a preview reaps only its proxy, not the stack.
   - **Readiness:** the frontend answers 200 with HTML on any path, so wait until `/__svc/api/api/openapi.json` parses as JSON.
-- **Playwright MCP tools only load at session start.** If `mcp__playwright__*` isn't listed, the user restarts with `claude --continue`; the preview keeps running. The browser revision must match MCP's bundled `playwright-core`, and the server must be registered with `--browser chromium`, because its default is system Chrome, which the devenv doesn't have. Dotfiles setup §9 handles both. If the MCP browser still won't launch, the subagent drives the same `playwright-core` library directly and says so in the blind spots.
+- **Playwright MCP tools only load at session start.** These are needed for the exploration step only; the scripted run doesn't need them.
+  - **If `mcp__playwright__*` isn't listed,** the user restarts with `claude --continue`; the preview keeps running.
+  - **The browser:** the revision must match MCP's bundled `playwright-core`, and the server must be registered with `--browser chromium`, because its default is system Chrome, which the devenv doesn't have. Dotfiles setup §9 handles both.
+  - **"Chromium distribution 'chrome' is not found":** a server started before that flag was added is still running. Check `ps -eo args | grep playwright/mcp` for `--browser chromium`. The fix is `/mcp`, then reconnect `playwright`, with no restart needed.
+  - **If MCP is unavailable,** explore with short scripted probes instead, and say so in the blind spots.
 - **Confirm the stack serves the PR head:** `git rev-parse` inside the worktree api container, and the new field present in `/__svc/api/api/openapi.json` (`/__svc/api/openapi.json` is a 404). Through the preview, the API is at `http://localhost:PORT/__svc/api/api/…`, and the test-token user is admin. For platform-lite the effective-scopes endpoint to stub is `**/admin-users/me/scopes`.
 - **Seed** through the API. Catalogue rows the API can't create (outcomes arrive via forge ingest) may be inserted with SQL into the worktree database only, prefixed `ui`. Record everything seeded, delete it at the end, and confirm the counts are back to where they started.
 - **Evidence goes on an Artifact page:** the table, the screenshots embedded, the seed list and the blind spots. Screenshots are embedded as data URIs, since a page can't load outside images. Link it from ONE PR comment that also carries the table; `gh` can't attach images. Publishing makes the page private, and Claude can't change sharing, so ask the user to share it with the company from the page's Share menu, or reviewers can't open the link.
