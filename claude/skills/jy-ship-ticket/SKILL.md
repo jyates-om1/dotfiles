@@ -108,7 +108,7 @@ Setup that has bitten us:
 - Snowflake key paths for any devcontainer come from `~/.config/obt/container-env-config`, which dotfiles setup §3b symlinks with the devenv paths.
 
 ## Hard-won conventions (do not relearn these)
-- Devcontainer commits as `-u om1`, never `--no-verify`; the commit's pre-commit hooks are the lint/format gate. `docker exec` default root will root-own `.git` — always `-u om1`.
+- Devcontainer commits as `-u om1`, never `--no-verify`; the commit's pre-commit hooks are the lint/format gate. `SKIP=<hook>` is a bypass too. If a hook fails for environmental reasons, fix the environment, or re-run the hooks in the right container with `pre-commit run --from-ref origin/main --to-ref HEAD`; never skip. Platform-lite's `mcp-scopes-lint` reads `/usr/src/config.json`, which in the SHARED container is the main checkout's config, so it fails to bootstrap. Commit changes to `backend/src/app/mcp/` from the worktree's own stack. `docker exec` default root will root-own `.git` — always `-u om1`.
 - Subagent claims (esp. "I ran the review", "tests pass", "pushed", "awaiting the suite") are unreliable — verify via the posted PR comment and the pushed head, or re-check yourself. See [[subagent-code-review-claims-unreliable]] and [[verify-pushed-commit-not-worktree]].
 - `git status` before every push; a fix living only in the working tree passes YOUR local run but CI/the-merge uses the pushed commit.
 - Code-review confidence threshold is **50** for this user.
