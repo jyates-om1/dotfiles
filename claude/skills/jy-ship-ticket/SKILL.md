@@ -1,7 +1,6 @@
 ---
 name: jy-ship-ticket
-description: Take one Jira ticket from refinement to a review-ready PR by orchestrating subagents — grill (refine) → implement → code-review loop → fable validation → fix-up → local UI check → verify → summarize (plus an on-request deployed check after merge). Use only when the user explicitly asks; it spawns many subagents and uses significant tokens.
-disable-model-invocation: true
+description: Take one Jira ticket from refinement to a review-ready PR by orchestrating subagents — grill (refine) → implement → code-review loop → fable validation → fix-up → local UI check → verify → summarize (plus an on-request deployed check after merge). Spawns many subagents and uses significant tokens, so reserve it for a single named ticket the user wants shipped end-to-end, not routine edits.
 ---
 
 # Ship a ticket
