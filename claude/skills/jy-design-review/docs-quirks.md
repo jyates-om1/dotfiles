@@ -14,7 +14,8 @@ Each of these cost a refused call or a wrong render at least once.
 
 ## Tables
 - **Insert a row:** `insert` with `as:"blocks"`, every cell spelled, `side:"after"` a row id (or `"end"` on the table id).
-- **Dropdown cells take two steps:** insert the row with an empty last cell, then replace that cell:
+- **Dropdowns in a new table go inline** (verified 2026-10-21): in the fill's markdown, put `<?claude block d0?>` in the cell and `"d0":{"type":"dropdown","enum":"<enum id>"}` (plus `"index":k` to preset) in `blocks`. One chip key per cell.
+- **Dropdowns in an existing table take two steps** (new row or new column): insert the row with an empty last cell, then replace that cell:
   `{"op":"replace","target":{"kind":"cell","table":"<id>","row":N,"col":M},"ifRev":<rev>,"with":{"as":"markdown","blocks":{"d1":{"type":"dropdown","enum":"<enum id>"}},"from":{"kind":"inline","content":"<?claude block d1?>"}}}`.
   Add `"index":k` in the dropdown to preset an option (Status column).
 - **Add a column:** one `insert` with `"each":true` over every row id, `as:"text"`, empty content. Then fill the cells.
@@ -22,8 +23,11 @@ Each of these cost a refused call or a wrong render at least once.
 - **Cell row indexes shift** after a row insert or delete in the same call. Put cell replaces first, then deletes, then inserts.
 
 ## Links and embeds
-- **In-doc links** are `#<block id>`. Prefer heading ids. Link targets in another tab are [U]: verify with a click in step 6, and fall back to a tab mention chip (`{"type":"mention","ref":"file/<tab id>"}`) plus the section name if they don't resolve.
+- **In-doc links** are `#<block id>`. Prefer heading ids. Both tabs' blocks share one id prefix (`<session>.<n>`), so a Reference heading id can equal a character id in Overview. Whether a cross-tab `#id` link scrolls to the other tab is [U]: ask the user to click one in step 6. If it doesn't, fall back to a tab mention chip (`{"type":"mention","ref":"file/<tab id>"}`) plus the section name.
 - **Change an embed caption:** `{"op":"set","target":{"kind":"blocks","ids":["<embed id>"]},"attrs":{"caption":"…"}}`.
+
+## Birth
+- The birth batch in birth.md works as written (verified 2026-10-21): two tabs, both enums and all pending blocks in one call. Filling a pending block needs no guards.
 
 ## Reading
 - Outline first (`payload {"projection":"outline"}`), then `{"kind":"view","parentId":"<id>"}` for one table or list, or `{"kind":"search","text":"…"}`. Never read the whole tab.
